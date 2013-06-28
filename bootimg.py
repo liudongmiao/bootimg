@@ -326,6 +326,9 @@ def parse_cpio(cpio, directory, cpiolist):
             except os.error: pass
             cpiolist.write('dir %s %s\n' % (name, srwx))
         elif S_ISREG(mode):
+            dirname = os.path.dirname(path)
+            if not os.path.isdir(dirname):
+                os.makedirs(dirname)
             tmp = open(path, 'wb')
             tmp.write(cpio.read(filesize))
             cpio.read(padding(filesize))
