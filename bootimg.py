@@ -9,6 +9,8 @@ import sys
 import struct
 from stat import *
 
+latin = lambda x: x.encode('latin')
+
 def write_bootimg(output, kernel, ramdisk, second,
         name, cmdline, base, page_size, padding_size):
     ''' make C8600-compatible bootimg.
@@ -150,9 +152,9 @@ def crc_ccitt(data, crc=0xffff):
         crc = (crc >> 8) ^ crc_ccitt_table[crc & 0xff ^ item]
     return crc
 
-#def write_crc(data, output):
-#    crc = crc_ccitt(data) ^ 0xffff
-#    # output.write(struct.pack('<H', crc))
+def get_crc_ccitt(data):
+    crc = crc_ccitt(data) ^ 0xffff
+    return struct.pack('<H', crc)
 
 POSITION = {0x30000000: 'boot.img',
             0x40000000: 'system.img',
@@ -174,18 +176,19 @@ def parse_updata(updata, debug=False):
         time                    |       char[16] -> hh.mm.ss
         INPUT                   |       char[16] -> INPUT
         null                    |       char[16]
-        unknown                 |       2 bytes, unknown
+        crc                     |       crc-ccitt for header (98bit)
         tag2                    |       0x00 0x10 0x00 0x00
         header                  |       crc-ccitt for every 4096 of content
         content                 |
         padding                 |       padding to 4 bytes
     '''
 
+    updatalist = open('updatalist.txt', 'w')
     while True:
         data = updata.read(4)
         if not data:
             break
-        if data == struct.pack('4s', ''):
+        if data == struct.pack('4s', latin('')):
             continue
 
         data += updata.read(94)
@@ -200,27 +203,29 @@ def parse_updata(updata, debug=False):
             time,
             INPUT,
             null,
-            unknown,    # 2 bytes
+            crc,
             tag2,       # \x00\x10\x00\x00
         ) = struct.unpack('<4sI4s8sII16s16s16s16s2s4s', data)
 
         magic, = struct.unpack('!I', magic)
-        tag1, unknown, tag2 = struct.unpack('!IHI', tag1 + unknown + tag2)
-        padding = (~(header_length + content_length) + 1) & 3
-
         assert magic == 0x55aa5aa5, 'invalid updata %x' % magic
-        assert tag1 == 0x01000000, 'invalid tag1 %x' % tag1
-        assert tag2 == 0x00100000, 'invalid tag2 %x' % tag2
+
+        header_header = list(struct.unpack('98B', data))
+        header_header[-5] = header_header[-6] = 0
+        assert crc == get_crc_ccitt(header_header)
+
+        open('boardname.bin', 'wb').write(boardname)
+        open('date.txt', 'wb').write(date)
+        open('time.txt', 'wb').write(time)
+
+        padding = (~(header_length + content_length) + 1) & 3
 
         remain = header_length - 98
         header = list(struct.unpack('%dB' % remain, updata.read(remain)))
 
-        sys.stderr.write('0x%x %x %d\n' % (position, unknown, content_length))
-
-        if debug:
-            output = open('0x%x' % position, 'wb')
-        else:
-            output = open(POSITION.get(position, os.devnull), 'wb')
+        output = open(POSITION.get(position, '0x%x.raw' % position), 'wb')
+        sys.stderr.write('%s\t0x%x\n' % (output.name, position))
+        updatalist.write('%s\t0x%x\n' % (output.name, position))
 
         remain = content_length
         while remain > 0:
@@ -238,6 +243,78 @@ def parse_updata(updata, debug=False):
         updata.seek(padding, 1)
 
     updata.close()
+    updatalist.close()
+
+def write_updata(output):
+    '''
+        magic                   |       0x55 0xaa 0x5a 0xa5
+        header_length           |       unsigned int
+        tag1                    |       0x01 0x00 0x00 0x00
+        boardname               |       char[8]
+        position                |       unsigned int
+        content_length          |       unsigned int
+        date                    |       char[16] -> YYYY.MM.DD
+        time                    |       char[16] -> hh.mm.ss
+        INPUT                   |       char[16] -> INPUT
+        null                    |       char[16]
+        crc                     |       crc-ccitt for header (98bit)
+        tag2                    |       0x00 0x10 0x00 0x00
+        header                  |       crc-ccitt for every 4096 of content
+        content                 |
+        padding                 |       padding to 4 bytes
+    '''
+    from time import strftime
+
+    output.write(struct.pack('1s', latin('')) * 92)
+    updatalist = open('updatalist.txt', 'r')
+    boardname = open('boardname.bin', 'rb').read()
+    if os.path.isfile('date.txt'):
+        date = open('date.txt').read()
+    else:
+        date = strftime('%Y.%m.%d')
+    if os.path.isfile('time.txt'):
+        time = open('time.txt').read()
+    else:
+        time = strftime('%H.%M.%S')
+    for record in updatalist:
+        name, position = record.split()[:2]
+        data = open(name, 'rb')
+        header = latin('')
+        content_length = 0
+        while True:
+            raw4096 = data.read(4096)
+            content_length += len(raw4096)
+            if not raw4096:
+                break
+            header += get_crc_ccitt(list(struct.unpack('%dB' % len(raw4096), raw4096)))
+        header_length = 98
+        header_length += len(header)
+        data.close()
+
+        header_header = struct.pack('<4sI4s8sII16s16s16s16s2s4s',
+                latin(u'\x55\xaa\x5a\xa5'),
+                header_length,
+                latin('\x01\x00\x00\x00'),
+                boardname,
+                int(position, 16),
+                content_length,
+                latin(date),
+                latin(time),
+                latin('INPUT'),
+                latin(''),
+                latin(''),
+                latin('\x00\x10\x00\x00'))
+        crc = get_crc_ccitt(list(struct.unpack('98B', header_header)))
+        output.write(header_header[:-6])
+        output.write(crc)
+        output.write(header_header[-4:])
+        output.write(header)
+        data = open(name, 'rb')
+        output.write(data.read())
+        data.close()
+        padding = (~(header_length + content_length) + 1) & 3
+        output.write(struct.pack('%ds' % padding, latin('')))
+    output.close()
 
 def cpio_list(directory, output=None):
     ''' generate gen_cpio_init-compatible list for directory,
@@ -351,7 +428,6 @@ def write_cpio(cpiolist, output):
 
     def write_cpio_header(output, name, mode=0, nlink=1, filesize=0):
         namesize = len(name) + 1
-        latin = lambda x: x.encode('latin')
         output.write(latin('070701'))
         output.write(latin('%08x' % 0)) # ino normally only for hardlink
         output.write(latin('%08x' % mode))
@@ -364,7 +440,7 @@ def write_cpio(cpiolist, output):
         output.write(latin('%08x' % namesize))
         output.write(latin('%08x' % 0)) # chksum always be 0
         output.write(latin(name))
-        output.write(struct.pack('1s', ''))
+        output.write(struct.pack('1s', latin('')))
         output.write(padding(namesize + 110, 4))
 
     def cpio_mkfile(output, name, path, mode, *kw):
@@ -534,7 +610,7 @@ class CPIOGZIP(GzipFile):
     # dont write filename
     def _write_gzip_header(self):
         self.fileobj.write(struct.pack('4B', 0x1f, 0x8b, 0x08, 0x00))
-        self.fileobj.write(struct.pack('4s', ''))
+        self.fileobj.write(struct.pack('4s', latin('')))
         self.fileobj.write(struct.pack('2B', 0x00, 0x03))
 
     # don't check crc and length
@@ -638,6 +714,7 @@ def write_565(raw, rle):
     return total
 
 __all__ = [ 'parse_updata',
+            'write_updata',
             'parse_bootimg',
             'write_bootimg',
             'parse_cpio',
@@ -757,6 +834,15 @@ def unpack_ramdisk(ramdisk=None, directory=None):
 
     cpiolist = open('cpiolist.txt', 'w')
     parse_cpio(cpio, directory, cpiolist)
+
+def repack_updata(updatalist=None, debug=False):
+    if updatalist is None:
+        updatalist = 'updatalist.txt'
+    sys.stderr.write('arguments: [updatalist file]\n')
+    sys.stderr.write('updatalist file: %s\n' % updatalist)
+    sys.stderr.write('output: updata_repack.app\n')
+    output = open('updata_repack.app', 'wb')
+    write_updata(output)
 
 def repack_ramdisk(cpiolist=None):
     if cpiolist is None:
@@ -902,6 +988,7 @@ if __name__ == '__main__':
 
     functions = {
                  '--unpack-updata': unpack_updata,
+                 '--repack-updata': repack_updata,
                  '--unpack-bootimg': unpack_bootimg,
                  '--unpack-ramdisk': unpack_ramdisk,
                  '--unpack-yaffs': unpack_yaffs,
