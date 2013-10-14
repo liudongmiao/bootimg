@@ -96,9 +96,9 @@ def parse_bootimg(bootimg):
 
     base = kernel_addr - 0x00008000
     assert magic.decode('latin') == 'ANDROID!', 'invald bootimg'
-    assert base == ramdisk_addr - 0x01000000, 'invalid bootimg'
-    assert base == second_addr - 0x00f00000, 'invalid bootimg'
-    assert base == tags_addr - 0x00000100, 'invalid bootimg'
+    # assert base == ramdisk_addr - 0x01000000, 'invalid bootimg'
+    # assert base == second_addr - 0x00f00000, 'invalid bootimg'
+    # assert base == tags_addr - 0x00000100, 'invalid bootimg'
 
     sys.stderr.write('base=0x%x\n' % base)
     sys.stderr.write('page_size=%d\n' % page_size)
