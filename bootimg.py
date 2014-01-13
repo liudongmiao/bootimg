@@ -20,7 +20,7 @@ def write_bootimg(output, kernel, ramdisk, second,
         base, page_size, padding_size: integer size
 
         official document:
-        http://android.git.kernel.org/?p=platform/system/core.git;a=blob;f=mkbootimg/bootimg.h
+        https://android.googlesource.com/platform/system/core/+/master/mkbootimg/bootimg.h
 
         Note: padding_size is not equal to page_size in HuaWei C8600
     '''
@@ -80,7 +80,7 @@ def parse_bootimg(bootimg):
         write second to second[.gz]
 
         official document:
-        http://android.git.kernel.org/?p=platform/system/core.git;a=blob;f=mkbootimg/bootimg.h
+        https://android.googlesource.com/platform/system/core/+/master/mkbootimg/bootimg.h
 
         Note: padding_size is not equal to page_size in HuaWei C8600
     '''
@@ -522,7 +522,7 @@ def parse_yaffs2(image, directory):
     ''' parse yaffs2 image.
 
         official document: (utils/mkyaffs2image)
-        http://android.git.kernel.org/?p=platform/external/yaffs2.git
+        https://android.googlesource.com/platform/external/yaffs2/+/master/yaffs2/
         spare: yaffs_PackedTags2 in yaffs_packedtags2.h
         chunk: yaffs_ExtendedTags in yaffs_guts.h
     '''
@@ -621,7 +621,7 @@ def parse_rle(rle, raw):
     ''' convert 565-rle format to raw file.
 
         official document:
-        http://android.git.kernel.org/?p=platform/build.git;a=blob;f=tools/rgb2565/to565.c
+        https://android.googlesource.com/platform/build/+/master/tools/rgb2565/to565.c
     '''
     r = lambda x: int(((x >> 11) & 0x1f) << 3)
     g = lambda x: int(((x >> 5) & 0x3f) << 2)
@@ -646,7 +646,7 @@ def parse_565(rle, raw):
     ''' convert 565 format to raw file.
 
         official document:
-        http://android.git.kernel.org/?p=platform/build.git;a=blob;f=tools/rgb2565/to565.c
+        https://android.googlesource.com/platform/build/+/master/tools/rgb2565/to565.c
     '''
     r = lambda x: int(((x >> 11) & 0x1f) << 3)
     g = lambda x: int(((x >> 5) & 0x3f) << 2)
