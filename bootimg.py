@@ -6,6 +6,7 @@
 
 import os
 import sys
+import mmap
 import struct
 from stat import *
 
@@ -713,6 +714,96 @@ def write_565(raw, rle):
     rle.close()
     return total
 
+def unpack_simg(simg=None, img=None):
+    '''unpack sparse image
+
+    official document:
+    https://android.googlesource.com/platform/system/core/+/master/libsparse/
+    '''
+    sys.stderr.write('arguments: [sparse image] [raw image]\n')
+    sys.stderr.write('simg file: %s\n' % simg)
+    sys.stderr.write(' img file: %s\n' % img)
+    if simg is None or img is None:
+        return False
+
+    SPARSE_HEADER_MAJOR_VER = 1
+    SPARSE_HEADER_LEN = 28
+    CHUNK_HEADER_LEN = 12
+    CHUNK_TYPE_RAW = 0xCAC1
+    CHUNK_TYPE_FILL = 0xCAC2
+    CHUNK_TYPE_DONT_CARE = 0xCAC3
+    CHUNK_TYPE_CRC32 = 0xCAC4
+    NULL = ''.encode('latin')
+
+    class SparseImageError(Exception):
+        pass
+
+    magic = struct.pack('<I', 0xed26ff3a)
+    wb = open(img, 'wb')
+    rb = open(simg, 'rb+')
+    mm = mmap.mmap(rb.fileno(), 0)
+    pos = -1
+    while True:
+        pos = mm.find(magic, pos + 1)
+        if pos < 0:
+            break
+        mm.seek(pos, 0)
+        (
+            _,
+            major_version,
+            minor_version,
+            file_hdr_sz,
+            chunk_hdr_sz,
+            blk_sz,
+            total_blks,
+            total_chunks,
+            image_checksum
+        ) = struct.unpack('<I4H4I', mm.read(SPARSE_HEADER_LEN))
+        if major_version != SPARSE_HEADER_MAJOR_VER:
+            continue
+        if file_hdr_sz < SPARSE_HEADER_LEN:
+            continue
+        if chunk_hdr_sz < CHUNK_HEADER_LEN:
+            continue
+
+        # finally, get it
+        if file_hdr_sz > SPARSE_HEADER_LEN:
+            mm.seek(file_hdr_sz - SPARSE_HEADER_LEN, 1)
+        for _ in xrange(0, total_chunks):
+            (
+                chunk_type,
+                reserved,
+                chunk_sz,
+                total_sz
+            ) = struct.unpack('<2H2I', mm.read(CHUNK_HEADER_LEN))
+            if file_hdr_sz > SPARSE_HEADER_LEN:
+                mm.seek(file_hdr_sz - SPARSE_HEADER_LEN, 1)
+            chunk_data_size = total_sz - chunk_hdr_sz
+            chunk_block_size = chunk_sz * blk_sz
+            if chunk_type == CHUNK_TYPE_RAW:
+                if chunk_data_size != chunk_block_size:
+                    raise SparseImageError()
+                wb.write(mm.read(chunk_data_size))
+            elif chunk_type == CHUNK_TYPE_FILL:
+                if chunk_data_size != 4:
+                    raise SparseImageError()
+                wb.write(mm.read(4) * (chunk_block_size / 4))
+            elif chunk_type == CHUNK_TYPE_DONT_CARE:
+                if chunk_data_size != 0:
+                    raise SparseImageError()
+                wb.write(struct.pack('%ss' % chunk_block_size, NULL))
+            elif chunk_type == CHUNK_TYPE_CRC32:
+                if chunk_data_size != 4:
+                    raise SparseImageError()
+                mm.read(4)
+            else:
+                raise SparseImageError()
+        # should break?
+        pos = mm.tell()
+
+    rb.close()
+    wb.close()
+
 __all__ = [ 'parse_updata',
             'write_updata',
             'parse_bootimg',
@@ -726,6 +817,7 @@ __all__ = [ 'parse_updata',
             'write_565',
             'cpio_list',
             'POSITION',
+            'unpack_simg',
             ]
 
 # above is the module of bootimg
@@ -1001,6 +1093,7 @@ if __name__ == '__main__':
                  '--repack-rle': repack_rle,
                  '--repack-565': repack_565,
                  '--cpio-list': cpio_list,
+                 '--unpack-simg': unpack_simg,
                 }
 
     def usage():
