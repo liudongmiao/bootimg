@@ -783,15 +783,33 @@ def unpack_simg(simg=None, img=None):
             if chunk_type == CHUNK_TYPE_RAW:
                 if chunk_data_size != chunk_block_size:
                     raise SparseImageError()
-                wb.write(mm.read(chunk_data_size))
+                while chunk_data_size > 0:
+                    if chunk_data_size > 8192:
+                        size = 8192
+                    else:
+                        size = chunk_data_size
+                    chunk_data_size -= size
+                    wb.write(mm.read(size))
             elif chunk_type == CHUNK_TYPE_FILL:
                 if chunk_data_size != 4:
                     raise SparseImageError()
-                wb.write(mm.read(4) * (chunk_block_size / 4))
+                while chunk_block_size > 0:
+                    if chunk_block_size > 8192:
+                        size = 8192
+                    else:
+                        size = chunk_block_size
+                    chunk_block_size -= size
+                    wb.write(mm.read(4) * (size / 4))
             elif chunk_type == CHUNK_TYPE_DONT_CARE:
                 if chunk_data_size != 0:
                     raise SparseImageError()
-                wb.write(struct.pack('%ss' % chunk_block_size, NULL))
+                while chunk_block_size > 0:
+                    if chunk_block_size > 8192:
+                        size = 8192
+                    else:
+                        size = chunk_block_size
+                    chunk_block_size -= size
+                    wb.write(struct.pack('%ss' % size, NULL))
             elif chunk_type == CHUNK_TYPE_CRC32:
                 if chunk_data_size != 4:
                     raise SparseImageError()
