@@ -2,18 +2,20 @@
 #fileencoding: utf-8
 #Author: Liu DongMiao <liudongmiao@gmail.com>
 #Created  : Sun 17 Oct 2010 11:19:58 AM CST
-#Modified : Tue 02 Nov 2010 03:34:12 PM CST
+#Modified : Wed 06 Aug 2014 10:34:04 PM CST
 
 import os
 import sys
 import mmap
+import json
 import struct
 from stat import *
+from hashlib import sha1
 
 latin = lambda x: x.encode('latin')
 
-def write_bootimg(output, kernel, ramdisk, second,
-        name, cmdline, base, page_size, padding_size):
+def write_bootimg(output, kernel, ramdisk, second, dtimg,
+        name, cmdline, kernel_addr, ramdisk_addr, second_addr, tags_addr, page_size, padding_size):
     ''' make C8600-compatible bootimg.
         output: file object
         kernel, ramdisk, second: file object or string
@@ -25,9 +27,6 @@ def write_bootimg(output, kernel, ramdisk, second,
 
         Note: padding_size is not equal to page_size in HuaWei C8600
     '''
-    if not isinstance(base, int):
-        base = 0x10000000
-
     if not isinstance(page_size, int):
         page_size = 0x800
 
@@ -49,28 +48,41 @@ def write_bootimg(output, kernel, ramdisk, second,
 
     def writecontent(output, x):
         if x is None:
+            # sha.update('')
+            sha.update(struct.pack('<I', 0))
             return None
 
         assert hasattr(x, 'read')
 
         x.seek(0, 0)
-        output.write(x.read())
+        content = x.read()
+        sha.update(content)
+        sha.update(struct.pack('<I', len(content)))
+        output.write(content)
         output.write(padding(x.tell()))
 
         if hasattr(x, 'close'):
             x.close()
 
-    output.write(struct.pack('<8s10I16s512s32s', 'ANDROID!',
-        getsize(kernel), 0x00008000 + base,
-        getsize(ramdisk), 0x01000000 + base,
-        getsize(second), 0x00F00000 + base,
-        0x00000100 + base, page_size, 0, 0,
-        name, cmdline, ''))
+    output.write(struct.pack('<8s10I16s512s', 'ANDROID!',
+        getsize(kernel), kernel_addr,
+        getsize(ramdisk), ramdisk_addr,
+        getsize(second), second_addr,
+        tags_addr, page_size, getsize(dtimg), 0,
+        name, cmdline))
 
-    output.write(padding(608))
+    idpos = output.tell()
+    # fill with null first
+    output.write(struct.pack('32s', ''))
+    output.write(padding(output.tell()))
+    sha = sha1()
     writecontent(output, kernel)
     writecontent(output, ramdisk)
     writecontent(output, second)
+    writecontent(output, dtimg)
+    # fill back sha1
+    output.seek(idpos, 0)
+    output.write(sha.digest())
     if hasattr('output', 'close'):
         output.close()
 
@@ -79,6 +91,8 @@ def parse_bootimg(bootimg):
         write kernel to kernel[.gz]
         write ramdisk to ramdisk[.gz]
         write second to second[.gz]
+        write dtimg to dt.img
+        write extra to unknown
 
         official document:
         https://android.googlesource.com/platform/system/core/+/master/mkbootimg/bootimg.h
@@ -90,7 +104,7 @@ def parse_bootimg(bootimg):
         kernel_size, kernel_addr,
         ramdisk_size, ramdisk_addr,
         second_size, second_addr,
-        tags_addr, page_size, zero, zero,
+        tags_addr, page_size, dt_size, zero,
         name, cmdline, id4x8
     ) = struct.unpack('<8s10I16s512s32s', bootimg.read(608))
     bootimg.seek(page_size - 608, 1)
@@ -101,7 +115,11 @@ def parse_bootimg(bootimg):
     # assert base == second_addr - 0x00f00000, 'invalid bootimg'
     # assert base == tags_addr - 0x00000100, 'invalid bootimg'
 
-    sys.stderr.write('base=0x%x\n' % base)
+    sys.stderr.write('kernel_addr=0x%x\n' % kernel_addr)
+    sys.stderr.write('ramdisk_addr=0x%x\n' % ramdisk_addr)
+    sys.stderr.write('second_addr=0x%x\n' % second_addr)
+    sys.stderr.write('tags_addr=0x%x\n' % tags_addr)
+    # sys.stderr.write('base=0x%x\n' % base)
     sys.stderr.write('page_size=%d\n' % page_size)
     sys.stderr.write('name="%s"\n' % name.decode('latin').strip('\x00'))
     sys.stderr.write('cmdline="%s"\n' % cmdline.decode('latin').strip('\x00'))
@@ -115,6 +133,19 @@ def parse_bootimg(bootimg):
 
     padding = lambda x: (~x + 1) & (size - 1)
     sys.stderr.write('padding_size=%d\n' % size)
+    metadata = {
+        'kernel_addr': kernel_addr,
+        'ramdisk_addr': ramdisk_addr,
+        'second_addr': second_addr,
+        'tags_addr': tags_addr,
+        'page_size': page_size,
+        'name': name.decode('latin').strip('\x00'),
+        'cmdline': cmdline.decode('latin').strip('\x00'),
+        'padding_size': size
+    }
+    w = open('bootimg.json', 'w')
+    w.write(json.dumps(metadata))
+    w.close()
 
     gzname = lambda x: x == struct.pack('3B', 0x1f, 0x8b, 0x08) and '.gz' or ''
 
@@ -135,6 +166,22 @@ def parse_bootimg(bootimg):
         output = open('second%s' % gzname(second[:3]) , 'wb')
         output.write(second)
         output.close()
+        bootimg.seek(padding(second_size), 1)
+
+    if dt_size:
+        dtimg = bootimg.read(dt_size)
+        output = open('dt.img', 'wb')
+        output.write(dtimg)
+        output.close()
+        bootimg.seek(padding(dt_size), 1)
+
+    unknown = bootimg.read()
+    if unknown:
+        output = open('unknown', 'wb')
+        output.write(unknown)
+        output.close()
+    else:
+        os.unlink('unknown')
 
     bootimg.close()
 
@@ -841,7 +888,7 @@ __all__ = [ 'parse_updata',
 # above is the module of bootimg
 # below is only for usage...
 
-def repack_bootimg(base=None, cmdline=None, page_size=None, padding_size=None):
+def repack_bootimg(kernel_addr=None, ramdisk_addr=None, second_addr=None, tags_addr=None, cmdline=None, page_size=None, padding_size=None):
 
     if os.path.exists('ramdisk.cpio.gz'):
         ramdisk = 'ramdisk.cpio.gz'
@@ -855,43 +902,84 @@ def repack_bootimg(base=None, cmdline=None, page_size=None, padding_size=None):
     else:
         second = ''
 
-    if base is None:
-        base = 0x200000
+    if os.path.exists('dt.img'):
+        dtimg = 'dt.img'
     else:
-        base = int(base, 16)
+        dtimg = ''
 
-    name = ''
+    sys.stderr.write('arguments: [kernel_addr] [ramdisk_addr] [second_addr] [tags_addr] [cmdline] [page_size] [padding_size]\n')
+    metadata = {}
+    if os.path.exists('bootimg.json'):
+        try:
+            metadata = json.loads(open('bootimg.json').read())
+        except:
+            pass
 
-    if cmdline is None:
+    if kernel_addr is None:
+        kernel_addr = metadata.get('kernel_addr', 0)
+    else:
+        kernel_addr = int(kernel_addr, 16)
+
+    if ramdisk_addr is None:
+        ramdisk_addr = metadata.get('ramdisk_addr', 0)
+    else:
+        ramdisk_addr = int(ramdisk_addr, 16)
+
+    if second_addr is None:
+        second_addr = metadata.get('second_addr', 0)
+    else:
+        second_addr = int(second_addr, 16)
+
+    if tags_addr is None:
+        tags_addr = metadata.get('tags_addr', 0)
+    else:
+        tags_addr = int(tags_addr, 16)
+
+    if metadata.has_key('name'):
+        name = metadata.get('name').encode('latin')
+    else:
+        name = ''
+
+    if cmdline is None and metadata.has_key('cmdline'):
+        cmdline = metadata.get('cmdline').encode('latin')
+    else:
         cmdline = 'mem=211M console=null androidboot.hardware=qcom'
 
     if page_size is None:
-        page_size = 2048
+        page_size = metadata.get('page_size', 2048)
     else:
         page_size = int(str(page_size))
 
     if padding_size is None:
-        padding_size = 4096
+        padding_size = metadata.get('padding_size', 4096)
     else:
         padding_size = int(str(padding_size))
 
-    sys.stderr.write('arguments: [base] [cmdline] [page_size] [padding_size]\n')
     sys.stderr.write('kernel: kernel\n')
     sys.stderr.write('ramdisk: %s\n' % ramdisk)
     sys.stderr.write('second: %s\n' % second)
-    sys.stderr.write('base: 0x%x\n' % base)
+    sys.stderr.write('dtimg: %s\n' % dtimg)
+    sys.stderr.write('kernel_addr: 0x%x\n' % kernel_addr)
+    sys.stderr.write('ramdisk_addr: 0x%x\n' % ramdisk_addr)
+    sys.stderr.write('second_addr: 0x%x\n' % second_addr)
+    sys.stderr.write('tags_addr: 0x%x\n' % tags_addr)
+    sys.stderr.write('name: %s\n' % name)
     sys.stderr.write('cmdline: %s\n' % cmdline)
     sys.stderr.write('page_size: %d\n' % page_size)
     sys.stderr.write('padding_size: %d\n' % padding_size)
     sys.stderr.write('output: boot.img\n')
 
-    options = { 'base': base,
+    options = { 'kernel_addr': kernel_addr,
+                'ramdisk_addr': ramdisk_addr,
+                'second_addr': second_addr,
+                'tags_addr': tags_addr,
                 'name': name,
                 'cmdline': cmdline,
                 'output': open('boot.img', 'wb'),
                 'kernel': open('kernel', 'rb'),
                 'ramdisk': open(ramdisk, 'rb'),
                 'second': second and open(second, 'rb') or None,
+                'dtimg': dtimg and open(dtimg, 'rb') or None,
                 'page_size': page_size,
                 'padding_size': padding_size,
                 }
