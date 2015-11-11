@@ -2,7 +2,7 @@
 #fileencoding: utf-8
 #Author: Liu DongMiao <liudongmiao@gmail.com>
 #Created  : Sun 17 Oct 2010 11:19:58 AM CST
-#Modified : Wed 06 Aug 2014 10:34:04 PM CST
+#Modified : Sun 08 Nov 2015 11:57:41 PM CST
 
 import os
 import sys
@@ -976,7 +976,7 @@ def repack_bootimg(kernel_addr=None, ramdisk_addr=None, second_addr=None, tags_a
                 'name': name,
                 'cmdline': cmdline,
                 'output': open('boot.img', 'wb'),
-                'kernel': open('kernel', 'rb'),
+                'kernel': os.path.isfile('kernel.gz') and open('kernel.gz', 'rb') or open('kernel', 'rb'),
                 'ramdisk': open(ramdisk, 'rb'),
                 'second': second and open(second, 'rb') or None,
                 'dtimg': dtimg and open(dtimg, 'rb') or None,
