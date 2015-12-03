@@ -2,7 +2,7 @@
 #fileencoding: utf-8
 #Author: Liu DongMiao <liudongmiao@gmail.com>
 #Created  : Sun 17 Oct 2010 11:19:58 AM CST
-#Modified : Sun 08 Nov 2015 11:57:41 PM CST
+#Modified : Wed 02 Dec 2015 01:11:03 PM CST
 
 import os
 import sys
@@ -180,7 +180,7 @@ def parse_bootimg(bootimg):
         output = open('unknown', 'wb')
         output.write(unknown)
         output.close()
-    else:
+    elif os.path.exists('unknown'):
         os.unlink('unknown')
 
     bootimg.close()
