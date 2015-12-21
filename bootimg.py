@@ -2,7 +2,7 @@
 #fileencoding: utf-8
 #Author: Liu DongMiao <liudongmiao@gmail.com>
 #Created  : Sun 17 Oct 2010 11:19:58 AM CST
-#Modified : Wed 02 Dec 2015 01:11:03 PM CST
+#Modified : Mon 21 Dec 2015 12:23:15 PM CST
 
 import os
 import sys
@@ -942,7 +942,7 @@ def repack_bootimg(kernel_addr=None, ramdisk_addr=None, second_addr=None, tags_a
 
     if cmdline is None and metadata.has_key('cmdline'):
         cmdline = metadata.get('cmdline').encode('latin')
-    else:
+    elif cmdline is None:
         cmdline = 'mem=211M console=null androidboot.hardware=qcom'
 
     if page_size is None:
