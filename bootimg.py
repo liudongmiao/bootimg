@@ -2,7 +2,7 @@
 #fileencoding: utf-8
 #Author: Liu DongMiao <liudongmiao@gmail.com>
 #Created  : Sun 17 Oct 2010 11:19:58 AM CST
-#Modified : Mon 21 Dec 2015 12:23:15 PM CST
+#Modified : Fri 04 Nov 2016 10:12:42 PM CST
 
 import os
 import sys
@@ -15,7 +15,7 @@ from hashlib import sha1
 latin = lambda x: x.encode('latin')
 
 def write_bootimg(output, kernel, ramdisk, second, dtimg,
-        name, cmdline, kernel_addr, ramdisk_addr, second_addr, tags_addr, page_size, padding_size):
+        name, cmdline, kernel_addr, ramdisk_addr, second_addr, tags_addr, page_size, padding_size, os_version):
     ''' make C8600-compatible bootimg.
         output: file object
         kernel, ramdisk, second: file object or string
@@ -36,7 +36,7 @@ def write_bootimg(output, kernel, ramdisk, second, dtimg,
     if not hasattr(output, 'write'):
         output = sys.stdout
 
-    padding = lambda x: struct.pack('%ds' % ((~x + 1) & (padding_size - 1)), '')
+    padding = lambda x: struct.pack('%ds' % ((~x + 1) & (padding_size - 1)), latin(''))
 
     def getsize(x):
         if x is None:
@@ -64,16 +64,16 @@ def write_bootimg(output, kernel, ramdisk, second, dtimg,
         if hasattr(x, 'close'):
             x.close()
 
-    output.write(struct.pack('<8s10I16s512s', 'ANDROID!',
+    output.write(struct.pack('<8s10I16s512s', latin('ANDROID!'),
         getsize(kernel), kernel_addr,
         getsize(ramdisk), ramdisk_addr,
         getsize(second), second_addr,
-        tags_addr, page_size, getsize(dtimg), 0,
+        tags_addr, page_size, getsize(dtimg), os_version,
         name, cmdline))
 
     idpos = output.tell()
     # fill with null first
-    output.write(struct.pack('32s', ''))
+    output.write(struct.pack('32s', latin('')))
     output.write(padding(output.tell()))
     sha = sha1()
     writecontent(output, kernel)
@@ -104,7 +104,7 @@ def parse_bootimg(bootimg):
         kernel_size, kernel_addr,
         ramdisk_size, ramdisk_addr,
         second_size, second_addr,
-        tags_addr, page_size, dt_size, zero,
+        tags_addr, page_size, dt_size, os_version,
         name, cmdline, id4x8
     ) = struct.unpack('<8s10I16s512s32s', bootimg.read(608))
     bootimg.seek(page_size - 608, 1)
@@ -115,17 +115,27 @@ def parse_bootimg(bootimg):
     # assert base == second_addr - 0x00f00000, 'invalid bootimg'
     # assert base == tags_addr - 0x00000100, 'invalid bootimg'
 
+    def say(v):
+        b7 = 127
+        b4 = 15
+        a = (v >> 25) & b7
+        b = (v >> 18) & b7
+        c = (v >> 11) & b7
+        y = ((v >>  4) & b7) + 2000
+        m = v & b4
+        return '%d.%d.%d %s-%s' % (a, b, c, y, m)
     sys.stderr.write('kernel_addr=0x%x\n' % kernel_addr)
     sys.stderr.write('ramdisk_addr=0x%x\n' % ramdisk_addr)
     sys.stderr.write('second_addr=0x%x\n' % second_addr)
     sys.stderr.write('tags_addr=0x%x\n' % tags_addr)
     # sys.stderr.write('base=0x%x\n' % base)
     sys.stderr.write('page_size=%d\n' % page_size)
+    sys.stderr.write('os_version=0x%08x(%s)\n' % (os_version, say(os_version)))
     sys.stderr.write('name="%s"\n' % name.decode('latin').strip('\x00'))
     sys.stderr.write('cmdline="%s"\n' % cmdline.decode('latin').strip('\x00'))
 
     while True:
-        if bootimg.read(page_size) == struct.pack('%ds' % page_size, ''):
+        if bootimg.read(page_size) == struct.pack('%ds' % page_size, latin('')):
             continue
         bootimg.seek(-page_size, 1)
         size = bootimg.tell()
@@ -141,7 +151,8 @@ def parse_bootimg(bootimg):
         'page_size': page_size,
         'name': name.decode('latin').strip('\x00'),
         'cmdline': cmdline.decode('latin').strip('\x00'),
-        'padding_size': size
+        'padding_size': size,
+        'os_version': os_version,
     }
     w = open('bootimg.json', 'w')
     w.write(json.dumps(metadata))
@@ -151,7 +162,15 @@ def parse_bootimg(bootimg):
 
     kernel = bootimg.read(kernel_size)
     output = open('kernel%s' % gzname(kernel[:3]) , 'wb')
-    output.write(kernel)
+    magic = struct.pack('>I', 0xd00dfeed)
+    pos = kernel.find(magic)
+    if pos > 0:
+        output.write(kernel[:pos])
+        kerneldt = open('kernel%s.dt' % gzname(kernel[:3]) , 'wb')
+        kerneldt.write(kernel[pos:])
+        kerneldt.close()
+    else:
+        output.write(kernel)
     output.close()
     bootimg.seek(padding(kernel_size), 1)
 
@@ -340,7 +359,7 @@ def write_updata(output):
         data.close()
 
         header_header = struct.pack('<4sI4s8sII16s16s16s16s2s4s',
-                latin(u'\x55\xaa\x5a\xa5'),
+                latin('\x55\xaa\x5a\xa5'),
                 header_length,
                 latin('\x01\x00\x00\x00'),
                 boardname,
@@ -472,7 +491,7 @@ def write_cpio(cpiolist, output):
         output: file object
     '''
 
-    padding = lambda x, y: struct.pack('%ds' % ((~x + 1) & (y - 1)), '')
+    padding = lambda x, y: struct.pack('%ds' % ((~x + 1) & (y - 1)), latin(''))
 
     def write_cpio_header(output, name, mode=0, nlink=1, filesize=0):
         namesize = len(name) + 1
@@ -512,7 +531,7 @@ def write_cpio(cpiolist, output):
         mode = int(mode, 8) | S_IFLNK
         filesize = len(path)
         write_cpio_header(output, name, mode, 1, filesize)
-        output.write(path)
+        output.write(latin(path))
         output.write(padding(filesize, 4))
 
     def cpio_mknod(output, *kw):
@@ -780,7 +799,7 @@ def unpack_simg(simg=None, img=None):
     CHUNK_TYPE_FILL = 0xCAC2
     CHUNK_TYPE_DONT_CARE = 0xCAC3
     CHUNK_TYPE_CRC32 = 0xCAC4
-    NULL = ''.encode('latin')
+    NULL = latin('')
 
     class SparseImageError(Exception):
         pass
@@ -816,7 +835,7 @@ def unpack_simg(simg=None, img=None):
         # finally, get it
         if file_hdr_sz > SPARSE_HEADER_LEN:
             mm.seek(file_hdr_sz - SPARSE_HEADER_LEN, 1)
-        for _ in xrange(0, total_chunks):
+        for _ in range(0, total_chunks):
             (
                 chunk_type,
                 reserved,
@@ -915,45 +934,47 @@ def repack_bootimg(kernel_addr=None, ramdisk_addr=None, second_addr=None, tags_a
         except:
             pass
 
-    if kernel_addr is None:
+    if 'kernel_addr' in metadata:
         kernel_addr = metadata.get('kernel_addr', 0)
     else:
         kernel_addr = int(kernel_addr, 16)
 
-    if ramdisk_addr is None:
+    if 'ramdisk_addr' in metadata:
         ramdisk_addr = metadata.get('ramdisk_addr', 0)
     else:
         ramdisk_addr = int(ramdisk_addr, 16)
 
-    if second_addr is None:
+    if 'second_addr' in metadata:
         second_addr = metadata.get('second_addr', 0)
     else:
         second_addr = int(second_addr, 16)
 
-    if tags_addr is None:
+    if 'tags_addr' in metadata:
         tags_addr = metadata.get('tags_addr', 0)
     else:
         tags_addr = int(tags_addr, 16)
 
-    if metadata.has_key('name'):
-        name = metadata.get('name').encode('latin')
-    else:
-        name = ''
+    if 'name' in metadata:
+        name = latin(metadata.get('name'))
+    elif name is None:
+        name = latin('')
 
-    if cmdline is None and metadata.has_key('cmdline'):
-        cmdline = metadata.get('cmdline').encode('latin')
+    if 'cmdline' in metadata:
+        cmdline = latin(metadata.get('cmdline'))
     elif cmdline is None:
-        cmdline = 'mem=211M console=null androidboot.hardware=qcom'
+        cmdline = latin('mem=211M console=null androidboot.hardware=qcom')
 
-    if page_size is None:
+    if 'page_size' in metadata:
         page_size = metadata.get('page_size', 2048)
     else:
         page_size = int(str(page_size))
 
-    if padding_size is None:
+    if 'padding_size' in metadata:
         padding_size = metadata.get('padding_size', 4096)
     else:
         padding_size = int(str(padding_size))
+
+    os_version = metadata.get('os_version', 0)
 
     sys.stderr.write('kernel: kernel\n')
     sys.stderr.write('ramdisk: %s\n' % ramdisk)
@@ -967,23 +988,41 @@ def repack_bootimg(kernel_addr=None, ramdisk_addr=None, second_addr=None, tags_a
     sys.stderr.write('cmdline: %s\n' % cmdline)
     sys.stderr.write('page_size: %d\n' % page_size)
     sys.stderr.write('padding_size: %d\n' % padding_size)
-    sys.stderr.write('output: boot.img\n')
+    sys.stderr.write('output: boot_repack.img\n')
 
+    if os.path.isfile('kernel.gz'):
+        kernel = open('kernel.gz', 'rb')
+    else:
+        kernel = open('kernel', 'rb')
+    if os.path.isfile(kernel.name + '.dt'):
+        dt = open(kernel.name + '.dt', 'rb')
+
+        kerneldt = open(kernel.name + '.bundle', 'wb')
+        kerneldt.write(kernel.read())
+        kerneldt.write(dt.read())
+        kerneldt.close()
+
+        dt.close()
+        kernel.close()
+        kernel = open(kerneldt.name, 'rb')
     options = { 'kernel_addr': kernel_addr,
                 'ramdisk_addr': ramdisk_addr,
                 'second_addr': second_addr,
                 'tags_addr': tags_addr,
                 'name': name,
                 'cmdline': cmdline,
-                'output': open('boot.img', 'wb'),
-                'kernel': os.path.isfile('kernel.gz') and open('kernel.gz', 'rb') or open('kernel', 'rb'),
+                'output': open('boot_repack.img', 'wb'),
+                'kernel': kernel,
                 'ramdisk': open(ramdisk, 'rb'),
                 'second': second and open(second, 'rb') or None,
                 'dtimg': dtimg and open(dtimg, 'rb') or None,
                 'page_size': page_size,
                 'padding_size': padding_size,
+                'os_version': os_version,
                 }
     write_bootimg(**options)
+    if kernel.name.endswith('.bundle'):
+        os.remove(kernel.name)
 
 def unpack_bootimg(bootimg=None):
     if bootimg is None:
